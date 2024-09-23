@@ -21,11 +21,6 @@ data class ModerationResponse(
     val ToxicityScore: Double?, 
     val sentiment: String,
 )
-data class FileClass(
-    val fileName: UUID,
-    val fileSize: Double,
-)
-
 
 fun main() {
     embeddedServer(Netty, port = 8080) {
@@ -44,34 +39,84 @@ fun main() {
 
 fun Application.configureRouting() {
     routing {
-        post("/content/moderate") { // NOTE(rahne1): need to actually save the fileclass to database so user can  check status in /content/{content_id}/status and stats of all content classified can be returned by the cache (cached data is classified as all data that is not fully procesed and the last 5 minutes worth of processed data)
-            val multipart = call.recieveMultipart()
-            val contentType: String? = null
-            var imageFile: File? = null
-            multipart.forEachPart { part - >
-            when (part) {
-                is PartData.FormItem -> {
-                    fileDescription = part.value
-                }
-                is PartData.FileItem -> {
-                    fileName = part
-                    val fileName = UUID.randomUUID().toString()
-                    val bytes = part.streamProvider().readBytes()
-                    if (bytes > 52428800) {
-                        call.respond(HttpStatusCode.NotAcceptable, "File size too large. Files must be below 50mb.")call.
+        post("/content/moderate") {
+            val multipart = call.receiveMultipart() 
+            var fileDescription: String? = null
+            var fileName: String? = null 
+            var fileSize: Long = 0 
+            var contentType: ContentType = ContentType.Text.Plain
+        
+            multipart.forEachPart { part ->
+                when (part) {
+                    is PartData.FormItem -> {
+                        fileDescription = part.value
                     }
-                    val fileClass = FileClass(fileName, FileSize)
-
-                    File("uploads/$fileName").writeBytes(fileBytes)
+                    is PartData.FileItem -> {
+                        fileName = part.originalFileName ?: UUID.randomUUID().toString()
+                        val bytes = part.streamProvider().readBytes()
+                        fileSize = bytes.size.toLong()
+                        
+                        if (fileSize > 52428800) {
+                            call.respond(
+                                HttpStatusCode.NotAcceptable, "File size too large, files must be 50mb or below."
+                            )
+                            return@forEachPart 
+                        }
+        
+                        contentType = when {
+                            isImage(fileName, bytes) -> ContentType.Image.Any
+                            else -> ContentType.Text.Plain
+                        }
+                        
+                        val uploadDir = File("uploads")
+                        if (!uploadDir.exists()) {
+                            uploadDir.mkdirs()
+                        }
+                        File("uploads/$fileName").writeBytes(bytes)
+                    }
+                    else -> {}
                 }
-
-                else -> {}
+                part.dispose()
             }
-            part.dispose()
+        
+            val contentId = UUID.randomUUID().toString() 
+            val fileClass = FileClass(
+                id = contentId,
+                fileName = fileName ?: "unknown",
+                fileSize = fileSize,
+                contentType = contentType.toString(),
+                description = fileDescription
+            )
+        
+            try {
+                database.saveFileClass(fileClass)
+                launch {
+                    processContent(contentId)
+                }
+                call.respond(HttpStatusCode.Accepted, mapOf(
+                    "content_id" to contentId,
+                    "content_type" to contentType.toString()
+                ))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
+            }
+        }
+        
+        fun isImage(fileName: String?, bytes: ByteArray): Boolean {
+            if (fileName != null) {
+                val extension = fileName.substringAfterLast('.', "").toLowerCase()
+                if (extension in listOf("jpg", "jpeg", "png")) {
+                    return true
+                }
+            }
+        
+            return when {
+                bytes.size > 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> true //jpeg
+                bytes.size > 8 && String(bytes.take(8).toByteArray()) == "\u0089PNG\r\n\u001a\n" -> true // png
+                else -> false
+            }
         }
 
-        call.respondText("Hello from POST /content/moderate", status = HttpStatusCode.OK)
-    }   
 
         get("/content/{content_id}/status") {
             val contentId = call.parameters["content_id"]
@@ -85,6 +130,7 @@ fun Application.configureRouting() {
         get("/job/dequeue") {
             call.respondText("Hello from GET /job/dequeue", status = HttpStatusCode.OK)
         }
+        
         get("/cache/stats") {
             call.respondText("Hello from GET /cache/stats", status = HttpStatusCode.OK)
         }
