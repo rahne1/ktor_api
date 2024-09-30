@@ -23,6 +23,8 @@ dependencies {
     implementation("io.ktor:ktor-serialization-jackson:2.3.0")
     implementation("io.ktor:ktor-server-content-negotiation:2.3.0")
     implementation("ch.qos.logback:logback-classic:1.5.8")
+    implementation("org.jetbrains.exposed:exposed-core:0.55.0")
+    implementation("org.jetbrains.exposed:exposed-jdbc:0.55.0")
     testImplementation("io.ktor:ktor-server-tests:2.3.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.10")
 }
