@@ -12,6 +12,6 @@ object Content : Table("content") {
 
 object ContentStorage : Table("content_storage") {
     val content_id = integer("content_id").references(Content.id)
-    val new_content = binary("content")
+    val content = binary("content")
     override val primaryKey = PrimaryKey(content_id, name = "content_id")
 }

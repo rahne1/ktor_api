@@ -11,6 +11,11 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.launch
+import org.example.database.DatabaseFactory
+import org.example.database.DatabaseFactory.dbQuery
+import org.example.models.Content
+import org.example.models.ContentStorage
 import org.jetbrains.exposed.sql.*
 import java.util.*
 
@@ -27,6 +32,7 @@ data class ContentClass(
 )
 
 fun main() {
+    DatabaseFactory.init()
     embeddedServer(Netty, port = 8080) {
         install(ContentNegotiation) {
             jackson()
@@ -53,15 +59,16 @@ fun Application.configureRouting() {
             var contentType: ContentType = ContentType.Text.Plain
 
             if (call.request.contentType() == ContentType.Application.Json) {
-                var content = call.receiveText().toByteArray()
+                val content = call.receiveText().toByteArray()
                 val contentClass = ContentClass(
                     contentType = "text"
                 )
                 try {
-//                launch {
-//                     processContent(content)
-//                }
-//                database.saveContentClass(contentClass)
+                    launch {
+                        processContent(content)
+                        Db.saveContent(content)
+                        Db.saveContentClass(contentClass(fileName, fileSize, contentType))
+                    }
                     call.respond(
                         HttpStatusCode.Accepted, mapOf(
                             "content_id" to fileName,
@@ -72,8 +79,7 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
 
-            }
-            else {
+            } else {
                 multipart.forEachPart { part: PartData ->
                     when (part) {
                         is PartData.FileItem -> {
@@ -105,10 +111,10 @@ fun Application.configureRouting() {
                     contentType = contentType.toString()
                 )
                 try {
-//                database.saveContentClass(contentClass)
-//                launch {
-//                     processContent(content)
-//                }
+                launch {
+                     processContent(content)
+                }
+                    Db.saveContentClass(contentClass(fileName, fileSize, contentType))
                     call.respond(
                         HttpStatusCode.Accepted, mapOf(
                             "content_id" to fileName,
@@ -141,17 +147,30 @@ fun Application.configureRouting() {
     }
 }
 
-//fun processContent(contentId: String) {
-//    process(contentId)
-//    TODO("Not yet implemented")
-//}
-//
-object database {
+fun contentClass(fileName: String?, fileSize: Long, contentType: ContentType): ContentClass {
+    TODO("Not yet implemented")
+}
+
+fun processContent(content: ByteArray) {
+    process(content)
+    TODO("Not yet implemented")
+}
+
+object Db {
     suspend fun saveContentClass(contentClass: ContentClass) {
-        pass
+        dbQuery {
+            Content.insert {
+                it[content_type] = contentClass.contentType
+            }
+        }
     }
+
     suspend fun saveContent(content: ByteArray) {
-        pass
+        dbQuery {
+            ContentStorage.insert {
+                it[content] = content
+            }
+        }
     }
 }
 
