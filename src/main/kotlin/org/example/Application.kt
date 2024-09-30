@@ -24,7 +24,6 @@ data class ContentClass(
     val fileName: String? = null,
     val fileSize: Long? = null,
     val contentType: String,
-    val description: String? = null,
 )
 
 fun main() {
@@ -49,7 +48,6 @@ fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
             val multipart = call.receiveMultipart()
-            var fileDescription: String? = null
             var fileName: String? = null
             var fileSize: Long = 0
             var contentType: ContentType = ContentType.Text.Plain
@@ -78,10 +76,6 @@ fun Application.configureRouting() {
             else {
                 multipart.forEachPart { part: PartData ->
                     when (part) {
-                        is PartData.FormItem -> {
-                            fileDescription = part.value
-                        }
-
                         is PartData.FileItem -> {
                             fileName = part.originalFileName ?: UUID.randomUUID().toString()
                             val bytes = part.streamProvider().readBytes()
@@ -108,8 +102,7 @@ fun Application.configureRouting() {
                 val contentClass = ContentClass(
                     fileName = fileName ?: "unknown",
                     fileSize = fileSize,
-                    contentType = contentType.toString(),
-                    description = fileDescription
+                    contentType = contentType.toString()
                 )
                 try {
 //                database.saveContentClass(contentClass)
@@ -176,5 +169,4 @@ fun isImage(fileName: String?, bytes: ByteArray): Boolean {
         else -> false
     }
 }
-
 
