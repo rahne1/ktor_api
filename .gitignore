@@ -43,4 +43,3 @@ bin/
 
 ### Mac OS ###
 .DS_Store
-src/main/kotlin/org/example/database/DatabaseFactory.kt
