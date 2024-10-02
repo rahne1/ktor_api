@@ -57,6 +57,7 @@ fun Application.configureRouting() {
             var fileName: String? = null
             var fileSize: Long = 0
             var contentType: ContentType = ContentType.Text.Plain
+            var fileBytes: ByteArray? = null
 
             if (call.request.contentType() == ContentType.Application.Json) {
                 val content = call.receiveText().toByteArray()
@@ -67,25 +68,26 @@ fun Application.configureRouting() {
                     launch {
                         processContent(content)
                         Db.saveContent(content)
-                        Db.saveContentClass(contentClass(fileName, fileSize, contentType))
+                        Db.saveContentClass(contentClass)
                     }
                     call.respond(
                         HttpStatusCode.Accepted, mapOf(
-                            "content_id" to fileName,
+                            "content_id" to UUID.randomUUID().toString(),
                             "content_type" to contentClass.contentType
                         )
                     )
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
-
             } else {
-                multipart.forEachPart { part: PartData ->
+                var fileProcessed = false
+
+                multipart.forEachPart { part ->
                     when (part) {
                         is PartData.FileItem -> {
                             fileName = part.originalFileName ?: UUID.randomUUID().toString()
-                            val bytes = part.streamProvider().readBytes()
-                            fileSize = bytes.size.toLong()
+                            fileBytes = part.streamProvider().readBytes()
+                            fileSize = fileBytes!!.size.toLong()
 
                             if (fileSize > 52428800) {
                                 call.respond(
@@ -95,33 +97,43 @@ fun Application.configureRouting() {
                             }
 
                             contentType = when {
-                                isImage(fileName, bytes) -> ContentType.Image.Any
+                                isImage(fileName, fileBytes!!) -> ContentType.Image.Any
                                 else -> ContentType.Text.Plain
                             }
-                            // pass a content storage object which contains the file's contents stored in a byte array into db here
-                        }
 
+                            fileProcessed = true
+                        }
                         else -> {}
                     }
                     part.dispose()
                 }
+
+                if (!fileProcessed) {
+                    call.respond(HttpStatusCode.BadRequest, "No file was uploaded")
+                    return@post
+                }
+
                 val contentClass = ContentClass(
-                    fileName = fileName ?: "unknown",
+                    fileName = fileName,
                     fileSize = fileSize,
                     contentType = contentType.toString()
                 )
+
                 try {
-                launch {
-                     processContent(content)
-                }
-                    Db.saveContentClass(contentClass(fileName, fileSize, contentType))
-                    call.respond(
-                        HttpStatusCode.Accepted, mapOf(
-                            "content_id" to fileName,
-                            "content_type" to contentClass.contentType,
-                            "message" to "File queued successfully. Check /content/$contentId/status for it's status.",
+                    fileBytes?.let { bytes ->
+                        launch {
+                            processContent(bytes)
+                            Db.saveContent(bytes)
+                            Db.saveContentClass(contentClass)
+                        }
+                        call.respond(
+                            HttpStatusCode.Accepted, mapOf(
+                                "content_id" to fileName,
+                                "content_type" to contentClass.contentType,
+                                // "message" to "File queued successfully. Check /content/$content_id (from database) /status for its status.",
+                            )
                         )
-                    )
+                    } ?: call.respond(HttpStatusCode.InternalServerError, "File content is null")
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
@@ -147,29 +159,30 @@ fun Application.configureRouting() {
     }
 }
 
-fun contentClass(fileName: String?, fileSize: Long, contentType: ContentType): ContentClass {
-    TODO("Not yet implemented")
-}
+//fun contentClass(fileName: String?, fileSize: Long, contentType: ContentType): ContentClass {
+//    TODO("Not yet implemented")
+//}
 
-fun processContent(content: ByteArray) {
-    process(content)
-    TODO("Not yet implemented")
+fun processContent(passedContent: ByteArray) {
+    println(passedContent)
 }
 
 object Db {
     suspend fun saveContentClass(contentClass: ContentClass) {
         dbQuery {
             Content.insert {
-                it[content_type] = contentClass.contentType
-            }
+                it[contentType] = contentClass.contentType
+                it[fileName] = contentClass.fileName
+                it[fileSize] = contentClass.fileSize
+            } get Content.id
         }
     }
 
     suspend fun saveContent(content: ByteArray) {
         dbQuery {
             ContentStorage.insert {
-                it[content] = content
-            }
+                it[ContentStorage.content] = content
+            } get ContentStorage.content_id
         }
     }
 }
@@ -188,4 +201,3 @@ fun isImage(fileName: String?, bytes: ByteArray): Boolean {
         else -> false
     }
 }
-
