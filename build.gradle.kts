@@ -27,7 +27,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-stdlib:2.0.20")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.55.0")
     implementation("org.postgresql:postgresql:42.7.4")
-    testImplementation("io.ktor:ktor-server-tests:3.0.0-rc-1")
+    testImplementation("io.ktor:ktor-server-tests:2-0-0")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.10")
 }
 
