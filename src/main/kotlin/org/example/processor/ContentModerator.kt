@@ -8,6 +8,7 @@ import java.net.URL
 
 class ContentModerator {
 
+    
     suspend fun moderateContent(content: ByteArray): Any = withContext(Dispatchers.IO) {
         val url = URL("hi")
         val connection = url.openConnection() as HttpURLConnection
@@ -16,7 +17,7 @@ class ContentModerator {
         connection.doOutput = true
         val jsonPayload = """
             {
-                "content: "$content"
+                "content: "$String(content)"
             }
         """.trimIndent()
 
@@ -35,7 +36,8 @@ class ContentModerator {
         }
     }
 
-    private fun parseModerationResponse(responseJson: String) {
+    private fun parseModerationResponse(responseJson: String): ModerationResponse {
         println(responseJson)
+        return ModerationResponse(isNegative = false, toxicityScore = 0.82, sentiment = "kind")
     }
 }

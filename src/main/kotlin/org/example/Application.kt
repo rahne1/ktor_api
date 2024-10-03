@@ -11,12 +11,15 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.utils.io.*
 import kotlinx.coroutines.launch
+import kotlinx.io.readByteArray
 import org.example.database.DatabaseFactory
 import org.example.database.DatabaseFactory.dbQuery
 import org.example.models.Content
 import org.example.models.ContentStorage
-import org.jetbrains.exposed.sql.*
+import org.example.processor.ContentModerator
+import org.jetbrains.exposed.sql.insert
 import java.util.*
 
 data class ModerationResponse(
@@ -86,8 +89,10 @@ fun Application.configureRouting() {
                     when (part) {
                         is PartData.FileItem -> {
                             fileName = part.originalFileName ?: UUID.randomUUID().toString()
-                            fileBytes = part.streamProvider().readBytes()
+                            val byteReadChannel: ByteReadChannel = part.provider()
+                            fileBytes = byteReadChannel.readRemaining().readByteArray()
                             fileSize = fileBytes!!.size.toLong()
+
 
                             if (fileSize > 52428800) {
                                 call.respond(
@@ -99,8 +104,8 @@ fun Application.configureRouting() {
                             contentType = when {
                                 isImage(fileName, fileBytes!!) -> ContentType.Image.Any
                                 else -> ContentType.Text.Plain
-                            }
 
+                            }
                             fileProcessed = true
                         }
                         else -> {}
@@ -130,7 +135,7 @@ fun Application.configureRouting() {
                             HttpStatusCode.Accepted, mapOf(
                                 "content_id" to fileName,
                                 "content_type" to contentClass.contentType,
-                                // "message" to "File queued successfully. Check /content/$content_id (from database) /status for its status.",
+//                                "message" to "File queued successfully. Check /content/$content_id (from database) /status for its status.",
                             )
                         )
                     } ?: call.respond(HttpStatusCode.InternalServerError, "File content is null")
@@ -159,12 +164,9 @@ fun Application.configureRouting() {
     }
 }
 
-//fun contentClass(fileName: String?, fileSize: Long, contentType: ContentType): ContentClass {
-//    TODO("Not yet implemented")
-//}
-
-fun processContent(passedContent: ByteArray) {
-    println(passedContent)
+suspend fun processContent(passedContent: ByteArray) {
+    val moderator = ContentModerator()
+    moderator.moderateContent(passedContent)
 }
 
 object Db {
