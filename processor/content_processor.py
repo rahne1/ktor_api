@@ -33,9 +33,9 @@ def process_image(content: bytes):
     score = output.logits_per_image
     probability = score.softmax(dim=1)[0]
     print(probability)
-    print(
-        {label: round(float(prob), 6) for label, prob in zip(prompt_list, probability)}
-    )
+    return {
+        label: round(float(prob), 6) for label, prob in zip(prompt_list, probability)
+    }
 
 
 def process_text(content: bytes):
@@ -43,12 +43,10 @@ def process_text(content: bytes):
     model = Detoxify("original")
     results = model.predict(text)
 
-    print(
-        {
-            "text": text,
-            "scores": {category: float(score) for category, score in results.items()},
-        }
-    )
+    return {
+        "text": text,
+        "scores": {category: float(score) for category, score in results.items()},
+    }
 
 
 if __name__ == "__main__":
