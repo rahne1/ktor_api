@@ -1,9 +1,11 @@
-import sys
 import base64
+import sys
 from io import BytesIO
+
 from detoxify import Detoxify
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
+
 
 def process_content(content_type: str, content: bytes):
     if content_type == "image":
@@ -13,36 +15,38 @@ def process_content(content_type: str, content: bytes):
     else:
         print("Invalid content type. Please specify 'image' or 'text'.")
 
+
 def process_image(content: bytes):
     image = Image.open(BytesIO(content))
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    
-    inputs = processor(
-        text=["inputs"],
-        padding=True, 
-        images=image, 
-        return_tensors="pt"
-    )
-    
+    prompts = [""]
+    inputs = processor(text=prompts, padding=True, images=image, return_tensors="pt")
     output = model(**inputs)
     score = output.logits_per_image
     toxicity = score.softmax(dim=1)
     print(toxicity[0])
 
+
 def process_text(content: bytes):
-    text = content.decode('utf-8')
+    text = content.decode("utf-8")
     model = Detoxify("original")
     results = model.predict(text)
 
-    print({
-        "text": text,
-        "scores": {category: score for category, score in results.items()},
-    })
+    print(
+        {
+            "text": text,
+            "scores": {category: score for category, score in results.items()},
+        }
+    )
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text.")
+
+        print(
+            "Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text."
+        )
         sys.exit(1)
 
     content_type = sys.argv[1].lower()

@@ -18,7 +18,7 @@ import org.example.database.DatabaseFactory
 import org.example.database.DatabaseFactory.dbQuery
 import org.example.models.Content
 import org.example.models.ContentStorage
-import org.example.processor.ContentModerator
+import org.example.processor.ContentParser
 import org.jetbrains.exposed.sql.insert
 import java.util.*
 
@@ -56,7 +56,6 @@ fun main() {
 fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
-            val multipart = call.receiveMultipart()
             var fileName: String? = null
             var fileSize: Long = 0
             var contentType: ContentType = ContentType.Text.Plain
@@ -76,15 +75,16 @@ fun Application.configureRouting() {
                     call.respond(
                         HttpStatusCode.Accepted, mapOf(
                             "content_id" to UUID.randomUUID().toString(),
-                            "content_type" to contentClass.contentType
+                            "content_type" to contentClass.contentType,
+                            "content" to content
                         )
                     )
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
             } else {
+                val multipart = call.receiveMultipart(50 * 1024 * 1024)
                 var fileProcessed = false
-
                 multipart.forEachPart { part ->
                     when (part) {
                         is PartData.FileItem -> {
@@ -108,6 +108,7 @@ fun Application.configureRouting() {
                             }
                             fileProcessed = true
                         }
+
                         else -> {}
                     }
                     part.dispose()
@@ -121,20 +122,24 @@ fun Application.configureRouting() {
                 val contentClass = ContentClass(
                     fileName = fileName,
                     fileSize = fileSize,
-                    contentType = contentType.toString()
+                    contentType = when {
+                        contentType.match(ContentType.Image.Any) -> "image"
+                        else -> "text"
+                    }
                 )
 
                 try {
-                    fileBytes?.let { bytes ->
+                    fileBytes?.let { content ->
                         launch {
-                            processContent(bytes)
-                            Db.saveContent(bytes)
+                            processContent(content)
+                            Db.saveContent(content)
                             Db.saveContentClass(contentClass)
                         }
                         call.respond(
                             HttpStatusCode.Accepted, mapOf(
                                 "content_id" to fileName,
                                 "content_type" to contentClass.contentType,
+                                "content" to content
 //                                "message" to "File queued successfully. Check /content/$content_id (from database) /status for its status.",
                             )
                         )
@@ -165,8 +170,8 @@ fun Application.configureRouting() {
 }
 
 suspend fun processContent(passedContent: ByteArray) {
-    val moderator = ContentModerator()
-    moderator.moderateContent(passedContent)
+    val moderator = ContentParser()
+    moderator.parseContent(passedContent)
 }
 
 object Db {
@@ -189,7 +194,7 @@ object Db {
     }
 }
 
-fun isImage(fileName: String?, bytes: ByteArray): Boolean {
+fun isImage(fileName: String?, content: ByteArray): Boolean {
     if (fileName != null) {
         val extension = fileName.substringAfterLast('.', "").lowercase()
         if (extension in listOf("jpg", "jpeg", "png")) {
@@ -198,8 +203,8 @@ fun isImage(fileName: String?, bytes: ByteArray): Boolean {
     }
 
     return when {
-        bytes.size > 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> true // JPEG
-        bytes.size > 8 && String(bytes.take(8).toByteArray()) == "\u0089PNG\r\n\u001a\n" -> true // PNG
+        content.size > 2 && content[0] == 0xFF.toByte() && content[1] == 0xD8.toByte() -> true // JPEG
+        content.size > 8 && String(content.take(8).toByteArray()) == "\u0089PNG\r\n\u001a\n" -> true // PNG
         else -> false
     }
 }
