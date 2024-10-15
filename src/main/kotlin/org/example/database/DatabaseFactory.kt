@@ -11,9 +11,9 @@ import org.jetbrains.exposed.sql.transactions.transaction
 object DatabaseFactory {
     fun init() {
         val driverClassName = "org.postgresql.Driver"
-        val jdbcURL = "jdbc:postgresql://localhost:5432/moderation_db"
-        val user = "moderator"
-        val password = "moderator1"
+        val jdbcURL = "placeholder"
+        val user = "placeholder"
+        val password = "placeholder"
 
         Database.connect(jdbcURL, driverClassName, user, password)
         createTables()
