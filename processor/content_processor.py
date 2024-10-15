@@ -92,29 +92,21 @@ def process_image(content: bytes):
     output = model(**inputs)
     score = output.logits_per_image
     toxicity = score.softmax(dim=1)
-    toxicity = toxicity.squeeze(0)
-    print({prompts: score.item() for prompts, score in zip(prompts, toxicity)})
-
+    print(toxicity[0])
 
 def process_text(content: bytes):
     text = content.decode("utf-8")
     model = Detoxify("original")
     results = model.predict(text)
 
-    print(
-        {
-            "text": text,
-            "scores": {category: score for category, score in results.items()},
-        }
-    )
-
+    print({
+        "text": text,
+        "scores": {category: score for category, score in results.items()},
+    })
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-
-        print(
-            "Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text."
-        )
+        print("Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text.")
         sys.exit(1)
 
     content_type = sys.argv[1].lower()
