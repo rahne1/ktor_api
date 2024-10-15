@@ -2,6 +2,7 @@ import base64
 import sys
 from io import BytesIO
 
+import numpy as np
 from detoxify import Detoxify
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -20,12 +21,79 @@ def process_image(content: bytes):
     image = Image.open(BytesIO(content))
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    prompts = [""]
+    prompts = [
+        "hate symbols",
+        "racist imagery",
+        "nazi symbols",
+        "white supremacist symbols",
+        "antisemitic imagery",
+        "islamophobic content",
+        "homophobic imagery",
+        "transphobic content",
+        "sexist imagery",
+        "misogynistic content",
+        "violent imagery",
+        "graphic violence",
+        "gore",
+        "animal cruelty",
+        "child exploitation",
+        "terrorist propaganda",
+        "extremist symbols",
+        "gang signs",
+        "drug use",
+        "self-harm",
+        "suicide imagery",
+        "pornographic content",
+        "sexually explicit imagery",
+        "offensive gestures",
+        "blackface",
+        "racist caricatures",
+        "burning religious symbols",
+        "desecration of sacred objects",
+        "lynching imagery",
+        "holocaust denial symbols",
+        "KKK imagery",
+        "neo-nazi symbols",
+        "fascist imagery",
+        "confederate flag",
+        "noose",
+        "swastika",
+        "SS bolts",
+        "white power hand signs",
+        "burning cross",
+        "hate speech",
+        "dehumanizing imagery",
+        "bullying content",
+        "racial slurs",
+        "gender-based violence",
+        "xenophobic content",
+        "antisocial behavior",
+        "intimidation symbols",
+        "hate crime imagery",
+        "body shaming",
+        "ageism",
+        "ableism",
+        "propaganda against minority groups",
+        "religious intolerance",
+        "radical extremist imagery",
+        "incitement to violence",
+        "cultural appropriation",
+        "mocking disabilities",
+        "scapegoating",
+        "defamatory symbols",
+        "obscene gestures",
+        "discriminatory caricatures",
+        "violent protest imagery",
+        "child abuse imagery",
+        "hate-based caricatures",
+        "intolerance symbols",
+    ]
     inputs = processor(text=prompts, padding=True, images=image, return_tensors="pt")
     output = model(**inputs)
     score = output.logits_per_image
     toxicity = score.softmax(dim=1)
-    print(toxicity[0])
+    toxicity = toxicity.squeeze(0)
+    print({prompts: score.item() for prompts, score in zip(prompts, toxicity)})
 
 
 def process_text(content: bytes):

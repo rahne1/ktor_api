@@ -18,14 +18,14 @@ import org.example.database.DatabaseFactory
 import org.example.database.DatabaseFactory.dbQuery
 import org.example.models.Content
 import org.example.models.ContentStorage
-import org.example.processor.ContentParser
+import org.example.parser.ContentParser
 import org.jetbrains.exposed.sql.insert
 import java.util.*
 
 data class ModerationResponse(
+    val contentId: Int,
     val isNegative: Boolean,
     val toxicityScore: Double?,
-    val sentiment: String,
 )
 
 data class ContentClass(
@@ -56,57 +56,78 @@ fun main() {
 fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
-            var fileName: String? = null
-            var fileSize: Long = 0
-            var contentType: ContentType = ContentType.Text.Plain
-            var fileBytes: ByteArray? = null
+            val contentType = call.request.contentType()
+            if (contentType == ContentType.Application.Json) {
+                val textContent = call.receiveText().toByteArray()
+                val contentClass = ContentClass(contentType = "text")
 
-            if (call.request.contentType() == ContentType.Application.Json) {
-                val content = call.receiveText().toByteArray()
-                val contentClass = ContentClass(
-                    contentType = "text"
-                )
                 try {
+                    if (textContent.size > 50 * 1024 * 1024) {
+                        call.respond(HttpStatusCode.NotAcceptable, "Text content size must be 50MB or below.")
+                        return@post
+                    }
+
+                    val contentId = Db.saveContentClass(contentClass)
                     launch {
-                        processContent(content)
-                        Db.saveContent(content)
-                        Db.saveContentClass(contentClass)
+                        Db.saveContent(textContent, contentId)
+                        processContent(textContent, contentClass.contentType)
                     }
                     call.respond(
                         HttpStatusCode.Accepted, mapOf(
-                            "content_id" to UUID.randomUUID().toString(),
+                            "content_id" to contentId.toString(),
                             "content_type" to contentClass.contentType,
-                            "content" to content
+                            "content" to textContent
                         )
                     )
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
             } else {
-                val multipart = call.receiveMultipart(50 * 1024 * 1024)
+                val multipart = call.receiveMultipart()
                 var fileProcessed = false
+
                 multipart.forEachPart { part ->
                     when (part) {
                         is PartData.FileItem -> {
-                            fileName = part.originalFileName ?: UUID.randomUUID().toString()
+                            val fileName = part.originalFileName ?: UUID.randomUUID().toString()
                             val byteReadChannel: ByteReadChannel = part.provider()
-                            fileBytes = byteReadChannel.readRemaining().readByteArray()
-                            fileSize = fileBytes!!.size.toLong()
-
-
-                            if (fileSize > 52428800) {
+                            val fileBytes = byteReadChannel.readRemaining().readByteArray()
+                            if (fileBytes.size > 50 * 1024 * 1024) {
                                 call.respond(
-                                    HttpStatusCode.NotAcceptable, "File size too large, files must be 50mb or below."
+                                    HttpStatusCode.NotAcceptable,
+                                    "File size too large, files must be 50MB or below."
                                 )
                                 return@forEachPart
                             }
 
-                            contentType = when {
-                                isImage(fileName, fileBytes!!) -> ContentType.Image.Any
-                                else -> ContentType.Text.Plain
-
+                            val contentType = if (isImage(fileName, fileBytes)) {
+                                "image"
+                            } else {
+                                "text"
                             }
+
                             fileProcessed = true
+                            val contentClass = ContentClass(
+                                fileName = fileName,
+                                fileSize = fileBytes.size.toLong(),
+                                contentType = contentType.toString()
+                            )
+                            val contentId = Db.saveContentClass(contentClass)
+
+                            launch {
+                                Db.saveContent(fileBytes, contentId)
+                                processContent(fileBytes, contentClass.contentType)
+                            }
+
+                            val encodedContent = Base64.getEncoder().encodeToString(fileBytes)
+                            call.respond(
+                                HttpStatusCode.Accepted, mapOf(
+                                    "content_id" to contentId.toString(),
+                                    "content_type" to contentClass.contentType,
+                                    "file_name" to contentClass.fileName,
+                                    "content" to encodedContent
+                                )
+                            )
                         }
 
                         else -> {}
@@ -116,36 +137,6 @@ fun Application.configureRouting() {
 
                 if (!fileProcessed) {
                     call.respond(HttpStatusCode.BadRequest, "No file was uploaded")
-                    return@post
-                }
-
-                val contentClass = ContentClass(
-                    fileName = fileName,
-                    fileSize = fileSize,
-                    contentType = when {
-                        contentType.match(ContentType.Image.Any) -> "image"
-                        else -> "text"
-                    }
-                )
-
-                try {
-                    fileBytes?.let { content ->
-                        launch {
-                            processContent(content)
-                            Db.saveContent(content)
-                            Db.saveContentClass(contentClass)
-                        }
-                        call.respond(
-                            HttpStatusCode.Accepted, mapOf(
-                                "content_id" to fileName,
-                                "content_type" to contentClass.contentType,
-                                "content" to content
-//                                "message" to "File queued successfully. Check /content/$content_id (from database) /status for its status.",
-                            )
-                        )
-                    } ?: call.respond(HttpStatusCode.InternalServerError, "File content is null")
-                } catch (e: Exception) {
-                    call.respond(HttpStatusCode.InternalServerError, "Error during processing of content: ${e.message}")
                 }
             }
         }
@@ -169,14 +160,14 @@ fun Application.configureRouting() {
     }
 }
 
-suspend fun processContent(passedContent: ByteArray) {
+suspend fun processContent(passedContent: ByteArray, contentType: String) {
     val moderator = ContentParser()
-    moderator.parseContent(passedContent)
+    moderator.parseContent(passedContent, contentType)
 }
 
 object Db {
-    suspend fun saveContentClass(contentClass: ContentClass) {
-        dbQuery {
+    suspend fun saveContentClass(contentClass: ContentClass): Int {
+        return dbQuery {
             Content.insert {
                 it[contentType] = contentClass.contentType
                 it[fileName] = contentClass.fileName
@@ -185,11 +176,12 @@ object Db {
         }
     }
 
-    suspend fun saveContent(content: ByteArray) {
+    suspend fun saveContent(content: ByteArray, contentId: Int) {
         dbQuery {
             ContentStorage.insert {
+                it[content_id] = contentId
                 it[ContentStorage.content] = content
-            } get ContentStorage.content_id
+            }
         }
     }
 }

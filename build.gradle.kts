@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm") version "2.0.10"
     id("io.ktor.plugin") version "2.3.0"
+    kotlin("plugin.serialization") version "2.0.10"
     application
 }
 
@@ -16,6 +17,7 @@ application {
 }
 
 dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("io.ktor:ktor-server-core:3.0.0-rc-1")
     implementation("io.ktor:ktor-server-netty:3.0.0-rc-1")
     implementation("io.ktor:ktor-server-host-common:3.0.0-rc-1")
