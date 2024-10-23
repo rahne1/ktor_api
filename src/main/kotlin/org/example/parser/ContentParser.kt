@@ -4,63 +4,80 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+
 
 @Serializable
-data class Warnings(
-    val warnings: Map<String, Double>
-) {
+data class Warnings(val warnings: Map<String, Double>) {
     operator fun get(key: String): Double? = warnings[key]
+    fun values(): List<Double> = warnings.values.toList()
     override fun toString(): String {
-        return warnings.entries.joinToString(", ") { (key, value) ->
-            "$key=$value"
-        }
+        return warnings.entries.joinToString(",") { (key, value) -> "$key=${"%.10f".format(value)}" } + "'}"
     }
 }
 
-data class ModerationResponse(
-    val isNegative: Boolean,
-    val toxicityScore: Double?,
+data class Response(
+    val isNegative: Boolean, val toxicityScore: Double
 )
 
 class ContentParser {
-    suspend fun parseContent(content: ByteArray, contentType: String) = withContext(Dispatchers.IO) {
-        val decodedContent = Base64.getEncoder().encodeToString(content)
-        val builder = ProcessBuilder(
-            "bash",
-            "-c",
-            "cd ./processor/ && source .venv/bin/activate && python3 content_processor.py $contentType $decodedContent"
-        )
-        var process: Process? = null
+    companion object {
+        private const val TOXICITY_THRESHOLD = 0.7
+        private const val COMMAND_TIMEOUT_SECONDS = 30L
+    }
 
+    suspend fun parseContent(content: ByteArray, contentType: String): Response = withContext(Dispatchers.IO) {
+        require(content.isNotEmpty()) { "Content cannot be empty" }
+        require(contentType.isNotBlank()) { "Content type cannot be blank" }
+
+        val decodedContent = Base64.getEncoder().encodeToString(content)
+        val command = buildCommand(contentType, decodedContent)
+
+        val process = ProcessBuilder("bash", "-c", command).start()
         try {
-            process = builder.start()
             val result = process.inputStream.bufferedReader().use { it.readText() }
-            val exitCode = process.waitFor()
-            if (exitCode != 0) {
-                throw RuntimeException("Command execution failed with exit code: $exitCode")
+            val errorOutput = process.errorStream.bufferedReader().use { it.readText() }
+
+            if (!process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                throw TimeoutException("Command execution timed out after $COMMAND_TIMEOUT_SECONDS seconds")
             }
-            val resultDict = parseResult(result)
-            println(resultDict)
-        } catch (e: Exception) {
-            throw RuntimeException("Error executing command", e)
+
+            if (process.exitValue() != 0) {
+                throw RuntimeException("Command execution failed with exit code: ${process.exitValue()}. Error: $errorOutput")
+            }
+            val warnings = parseResult(result)
+            val maxToxicityScore = warnings.values().maxOrNull() ?: 0.0
+
+             Response(
+                isNegative = maxToxicityScore > TOXICITY_THRESHOLD, toxicityScore = maxToxicityScore
+            )
         } finally {
-            process?.destroy()
+            process.destroy()
         }
     }
 
-    private fun parseResult(result: String): Warnings {
-        val warningsMap = mutableMapOf<String, Double>()
-        val pairs = result.split(", ")
+    private fun buildCommand(contentType: String, decodedContent: String): String =
+        "cd ./processor/ && source .venv/bin/activate && python3 content_processor.py ${contentType.escapeShellArg()} ${decodedContent.escapeShellArg()}"
 
-        for (pair in pairs) {
-            val (key, value) = pair.split(": ")
-            val cleanKey = key.trim('\'')
-            val doubleValue = value.toDoubleOrNull()
-            if (doubleValue != null) {
-                warningsMap[cleanKey] = doubleValue
+    private fun String.escapeShellArg(): String = "'${replace("'", "'\\''")}'"
+
+
+    private fun parseResult(result: String): Warnings {
+        val warningsMap = result.split(",").mapNotNull { pair ->
+            val parts = pair.split(":")
+            if (parts.size == 2) {
+                val key = parts[0].trim().trim('\'', '"')
+                val value = parts[1].trim().trim('\'', '"')
+                value.toDoubleOrNull()?.let { key to it }
+            } else {
+                null
             }
-        }
+        }.toMap()
 
         return Warnings(warningsMap)
     }
+
+
 }

@@ -2,7 +2,6 @@ import base64
 import sys
 from io import BytesIO
 
-import numpy as np
 from detoxify import Detoxify
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
@@ -88,25 +87,28 @@ def process_image(content: bytes):
         "hate-based caricatures",
         "intolerance symbols",
     ]
+    prompts = [prompt.replace(" ", "_") for prompt in prompts]
     inputs = processor(text=prompts, padding=True, images=image, return_tensors="pt")
     output = model(**inputs)
     score = output.logits_per_image
     toxicity = score.softmax(dim=1)
-    print(toxicity[0])
+    toxicity = toxicity.squeeze(0)
+    print({prompts: score.item() for prompts, score in zip(prompts, toxicity)})
+
 
 def process_text(content: bytes):
     text = content.decode("utf-8")
     model = Detoxify("original")
     results = model.predict(text)
 
-    print({
-        "text": text,
-        "scores": {category: score for category, score in results.items()},
-    })
+    print({category: "{:.10f}".format(score) for category, score in results.items()})
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text.")
+        print(
+            "Usage: python content_processor.py <content_type> <base64_encoded_content>. Content type is either an image or text."
+        )
         sys.exit(1)
 
     content_type = sys.argv[1].lower()
