@@ -40,15 +40,60 @@ data class ContentClass(
     var status: String = null.toString(),
 )
 
-data class QueueItem(val contentType: String, val content: ByteArray): Comparable<QueueItem> {
+data class QueueItem(val contentType: String, val content: ByteArray, val timestamp: Long = System.nanoTime()) :
+    Comparable<QueueItem> {
     override fun compareTo(other: QueueItem): Int {
         return when {
             this.contentType.startsWith("image") && !other.contentType.startsWith("image") -> -1
             !this.contentType.startsWith("image") && other.contentType.startsWith("image") -> 1
-            else -> 0
+            else -> this.timestamp.compareTo(other.timestamp)
         }
     }
 }
+class Queue {
+    private val queue: PriorityBlockingQueue<QueueItem> = PriorityBlockingQueue()
+
+    suspend fun enqueue(item: QueueItem, call: ApplicationCall) {
+        try {
+            queue.offer(item)
+            println("QUEUE: Added item with contentType: ${item.contentType}, size: ${queue.size}")
+        } catch (e: Exception) {
+            handleError(e, call)
+        }
+    }
+
+    suspend fun removeHead(call: ApplicationCall) {
+        try {
+            val removedItem = queue.poll()
+            println("QUEUE: Removed head item with contentType: ${removedItem?.contentType}, size: ${queue.size}")
+        } catch (e: Exception) {
+            handleError(e, call)
+        }
+    }
+
+    suspend fun removeItem(item: QueueItem, call: ApplicationCall) {
+        try {
+            val removed = queue.remove(item)
+            println("QUEUE: Removed item with contentType: ${item.contentType}, success: $removed, size: ${queue.size}")
+        } catch (e: Exception) {
+            handleError(e, call)
+        }
+    }
+
+    fun size(): Int {
+        return queue.size.also {
+            println("QUEUE: Current size: $it")
+        }
+    }
+}
+
+
+private suspend fun handleError(e: Exception, call: ApplicationCall) {
+    call.respond(
+        HttpStatusCode.InternalServerError, "Queue error occurred: $e"
+    )
+}
+
 
 fun main() {
     DatabaseFactory.init()
@@ -74,6 +119,7 @@ fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
             val contentType = call.request.contentType()
+            val queue = Queue()
             val (contentBytes, contentClass) = when {
                 contentType == ContentType.Application.Json -> {
                     val textContent = call.receiveText().toByteArray()
@@ -112,14 +158,25 @@ fun Application.configureRouting() {
             }
 
             val contentId = Db.saveContentClass(contentClass)
-            contentClass.status = "processing"
+
             Db.updateStatus(contentId, contentClass.status)
             try {
                 coroutineScope {
+                    val item = QueueItem(
+                        contentType = contentClass.contentType,
+                        content = contentBytes,
+                    )
+                    queue.enqueue(item, call)
+                    contentClass.status = "processing"
                     val processContentDeferred = async { processContent(contentBytes, contentClass) }
                     val response = processContentDeferred.await()
                     async { Db.saveContent(contentBytes, contentId, response.isNegative, response.toxicityScore) }
                     contentClass.status = "processed"
+                    if (queue.size() == 1) {
+                        queue.removeHead(call)
+                    } else {
+                        queue.removeItem(item, call)
+                    }
                     Db.updateStatus(contentId, contentClass.status)
                     val moderationResponse = ModerationResponse(
                         contentId = contentId,
@@ -150,18 +207,9 @@ fun Application.configureRouting() {
             val status = Db.fetchContentStatus(contentId)
             call.respond(
                 HttpStatusCode.Accepted, mapOf(
-                    "content_id" to contentId,
-                    "status" to status
+                    "content_id" to contentId, "status" to status
                 )
             )
-        }
-
-        post("/job/enqueue") {
-            call.respondText("Hello from POST /job/enqueue", status = HttpStatusCode.OK)
-        }
-
-        get("/job/dequeue") {
-            call.respondText("Hello from GET /job/dequeue", status = HttpStatusCode.OK)
         }
 
         get("/cache/stats") {
