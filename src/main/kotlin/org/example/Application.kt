@@ -230,6 +230,7 @@ fun Application.configureRouting() {
                     queue.enqueue(item, call)
                     contentClass.status = "processing"
                     cacheItem.status = contentClass.status
+                    cache.addItem(cacheItem)
                     val processContentDeferred = async { processContent(contentBytes, contentClass) }
                     val response = processContentDeferred.await()
                     async { Db.saveContent(contentBytes, contentId, response.isNegative, response.toxicityScore) }
@@ -263,6 +264,7 @@ fun Application.configureRouting() {
                 )
                 contentClass.status = "errored"
                 cacheItem.status = contentClass.status
+                cache.addItem(cacheItem)
                 Db.updateStatus(contentId, contentClass.status)
                 call.respond(
                     HttpStatusCode.InternalServerError, "There has been an issue with processing content: ${e.message}"
