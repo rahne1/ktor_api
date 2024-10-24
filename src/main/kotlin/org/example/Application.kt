@@ -1,5 +1,6 @@
 package org.example
 
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.serialization.jackson.*
@@ -23,6 +24,8 @@ import org.example.parser.ContentParser
 import org.example.parser.Response
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.update
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 import java.util.*
 import java.util.concurrent.PriorityBlockingQueue
 
@@ -40,6 +43,12 @@ data class ContentClass(
     var status: String = null.toString(),
 )
 
+data class CacheItem(
+    val contentId: Int,
+    val time: LocalDateTime = LocalDateTime.now(),
+    var status: String = null.toString()
+)
+
 data class QueueItem(val contentType: String, val content: ByteArray, val timestamp: Long = System.nanoTime()) :
     Comparable<QueueItem> {
     override fun compareTo(other: QueueItem): Int {
@@ -50,6 +59,8 @@ data class QueueItem(val contentType: String, val content: ByteArray, val timest
         }
     }
 }
+
+
 class Queue {
     private val queue: PriorityBlockingQueue<QueueItem> = PriorityBlockingQueue()
 
@@ -71,7 +82,7 @@ class Queue {
 
     suspend fun removeItem(item: QueueItem, call: ApplicationCall) {
         try {
-           queue.remove(item)
+            queue.remove(item)
         } catch (e: Exception) {
             handleError(e, call)
         }
@@ -82,6 +93,51 @@ class Queue {
     }
 }
 
+class Cache {
+    private val cache = ArrayList<CacheItem>()
+    private val queue = Queue()
+    private val max = 100
+    fun addItem(item: CacheItem) {
+        removeExpired()
+        val now = LocalDateTime.now()
+        if (ChronoUnit.MINUTES.between(item.time, now) <= 10) {
+            cache.add(item)
+            println("added to cache")
+        }
+    }
+
+    private fun removeExpired() {
+        val now = LocalDateTime.now()
+        cache.removeIf { ChronoUnit.MINUTES.between(it.time, now) > 10 }
+    }
+
+    fun stats(): Map<String, Any> {
+        val processing = cache.filter {
+            it.status == "processing"
+        }
+        val processed = cache.filter {
+            it.status == "processed"
+        }
+        val errored = cache.filter {
+            it.status == "errored"
+        }
+        val queueStatus = when {
+            queue.size() == 0 -> "empty"
+            queue.size() < max / 1.75 -> "light"
+            else -> "heavy"
+        }
+
+
+        return mapOf(
+            "size" to cache.size,
+            "processing" to processing,
+            "processed" to processed,
+            "errored" to errored,
+            "queue_status" to queueStatus,
+            "cache" to "10 minutes from {${cache.first.time}}"
+        )
+    }
+}
 
 private suspend fun handleError(e: Exception, call: ApplicationCall) {
     call.respond(
@@ -89,12 +145,16 @@ private suspend fun handleError(e: Exception, call: ApplicationCall) {
     )
 }
 
+val cache = Cache()
+val queue = Queue()
 
 fun main() {
     DatabaseFactory.init()
     embeddedServer(Netty, port = 8080) {
         install(ContentNegotiation) {
-            jackson()
+            jackson{
+                registerModule(JavaTimeModule())
+            }
         }
         install(StatusPages) {
             exception<Throwable> { call: ApplicationCall, cause: Throwable ->
@@ -113,8 +173,8 @@ fun main() {
 fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
+            println(LocalDateTime.now())
             val contentType = call.request.contentType()
-            val queue = Queue()
             val (contentBytes, contentClass) = when {
                 contentType == ContentType.Application.Json -> {
                     val textContent = call.receiveText().toByteArray()
@@ -153,20 +213,24 @@ fun Application.configureRouting() {
             }
 
             val contentId = Db.saveContentClass(contentClass)
-
-            Db.updateStatus(contentId, contentClass.status)
             try {
                 coroutineScope {
                     val item = QueueItem(
                         contentType = contentClass.contentType,
                         content = contentBytes,
                     )
+                    val cacheItem = CacheItem(
+                        contentId = contentId,
+                    )
                     queue.enqueue(item, call)
                     contentClass.status = "processing"
+                    cacheItem.status = contentClass.status
                     val processContentDeferred = async { processContent(contentBytes, contentClass) }
                     val response = processContentDeferred.await()
                     async { Db.saveContent(contentBytes, contentId, response.isNegative, response.toxicityScore) }
                     contentClass.status = "processed"
+                    cacheItem.status = contentClass.status
+                    cache.addItem(cacheItem)
                     if (queue.size() == 1) {
                         queue.removeHead(call)
                     } else {
@@ -189,7 +253,11 @@ fun Application.configureRouting() {
                     )
                 }
             } catch (e: Exception) {
+                val cacheItem = CacheItem(
+                    contentId = contentId,
+                )
                 contentClass.status = "errored"
+                cacheItem.status = contentClass.status
                 Db.updateStatus(contentId, contentClass.status)
                 call.respond(
                     HttpStatusCode.InternalServerError, "There has been an issue with processing content: ${e.message}"
@@ -208,7 +276,7 @@ fun Application.configureRouting() {
         }
 
         get("/cache/stats") {
-            call.respondText("Hello from GET /cache/stats", status = HttpStatusCode.OK)
+            call.respond(HttpStatusCode.Accepted, cache.stats())
         }
     }
 }
