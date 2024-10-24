@@ -25,6 +25,7 @@ import org.example.parser.Response
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.update
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.*
 import java.util.concurrent.PriorityBlockingQueue
@@ -112,30 +113,36 @@ class Cache {
     }
 
     fun stats(): Map<String, Any> {
-        val processing = cache.filter {
-            it.status == "processing"
-        }
-        val processed = cache.filter {
-            it.status == "processed"
-        }
-        val errored = cache.filter {
-            it.status == "errored"
-        }
+        val processing = cache.filter { it.status == "processing" }
+        val processed = cache.filter { it.status == "processed" }
+        val errored = cache.filter { it.status == "errored" }
+
         val queueStatus = when {
             queue.size() == 0 -> "empty"
             queue.size() < max / 1.75 -> "light"
             else -> "heavy"
         }
 
-
         return mapOf(
             "size" to cache.size,
-            "processing" to processing,
-            "processed" to processed,
-            "errored" to errored,
+            "processing" to processing.map { formatCacheItem(it) },
+            "processed" to processed.map { formatCacheItem(it) },
+            "errored" to errored.map { formatCacheItem(it) },
             "queue_status" to queueStatus,
-            "cache" to "10 minutes from {${cache.first.time}}"
+            "cache" to formatCacheDuration(10)
         )
+    }
+
+    private fun formatCacheItem(item: CacheItem): Map<String, Any> {
+        return mapOf(
+            "contentId" to item.contentId,
+            "time" to item.time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS")),
+            "status" to item.status
+        )
+    }
+
+    private fun formatCacheDuration(minutes: Int): String {
+        return "$minutes minutes from ${LocalDateTime.now().minusMinutes(minutes.toLong()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))}"
     }
 }
 
@@ -184,7 +191,7 @@ fun Application.configureRouting() {
                 contentType.match(ContentType.MultiPart.FormData) -> {
                     var fileBytes: ByteArray? = null
                     var fileName: String? = null
-                    call.receiveMultipart().forEachPart { part ->
+                    call.receiveMultipart(50*1024*1024).forEachPart { part ->
                         if (part is PartData.FileItem) {
                             fileName = part.originalFileName ?: UUID.randomUUID().toString()
                             fileBytes = part.provider().readRemaining().readByteArray()
