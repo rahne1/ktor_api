@@ -103,7 +103,6 @@ class Cache {
         val now = LocalDateTime.now()
         if (ChronoUnit.MINUTES.between(item.time, now) <= 10) {
             cache.add(item)
-            println("added to cache")
         }
     }
 
@@ -180,7 +179,6 @@ fun main() {
 fun Application.configureRouting() {
     routing {
         post("/content/moderate") {
-            println(LocalDateTime.now())
             val contentType = call.request.contentType()
             val (contentBytes, contentClass) = when {
                 contentType == ContentType.Application.Json -> {
