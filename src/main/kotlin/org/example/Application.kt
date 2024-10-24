@@ -56,7 +56,6 @@ class Queue {
     suspend fun enqueue(item: QueueItem, call: ApplicationCall) {
         try {
             queue.offer(item)
-            println("QUEUE: Added item with contentType: ${item.contentType}, size: ${queue.size}")
         } catch (e: Exception) {
             handleError(e, call)
         }
@@ -64,8 +63,7 @@ class Queue {
 
     suspend fun removeHead(call: ApplicationCall) {
         try {
-            val removedItem = queue.poll()
-            println("QUEUE: Removed head item with contentType: ${removedItem?.contentType}, size: ${queue.size}")
+            queue.poll()
         } catch (e: Exception) {
             handleError(e, call)
         }
@@ -73,17 +71,14 @@ class Queue {
 
     suspend fun removeItem(item: QueueItem, call: ApplicationCall) {
         try {
-            val removed = queue.remove(item)
-            println("QUEUE: Removed item with contentType: ${item.contentType}, success: $removed, size: ${queue.size}")
+           queue.remove(item)
         } catch (e: Exception) {
             handleError(e, call)
         }
     }
 
     fun size(): Int {
-        return queue.size.also {
-            println("QUEUE: Current size: $it")
-        }
+        return queue.size
     }
 }
 
